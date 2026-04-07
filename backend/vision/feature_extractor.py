@@ -1,5 +1,10 @@
 import numpy as np
-from features import EAR_THRESHOLD
+try:
+    from .features import EYE_CLOSED_THRESHOLD
+except (ImportError, ValueError):
+    from vision.features import EYE_CLOSED_THRESHOLD
+
+EAR_THRESHOLD = EYE_CLOSED_THRESHOLD
 
 class VisionFeatureExtractor:
     """

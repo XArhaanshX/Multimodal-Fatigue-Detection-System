@@ -1,6 +1,7 @@
 import numpy as np
 
-EAR_THRESHOLD = 0.20
+EYE_CLOSED_THRESHOLD = 0.23
+EYE_OPEN_THRESHOLD = 0.26
 
 #  Euclidean Distance Helper
 def euclidean(p1, p2):

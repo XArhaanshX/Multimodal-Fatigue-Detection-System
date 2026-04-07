@@ -46,16 +46,16 @@ def get_vision_pipeline():
                 
                 # Handling missing camera frame
                 if raw_frame is None:
-                    frame = np.zeros((240, 320, 3), dtype=np.uint8)
-                    cv2.putText(frame, "CAMERA NOT READY", (50, 120), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    frame = np.zeros((720, 960, 3), dtype=np.uint8)
+                    cv2.putText(frame, "CAMERA NOT READY", (250, 360), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
                     yield None, frame
                     continue
                 
                 frame_count += 1
                 
-                # Optimized resolution
-                frame = cv2.resize(raw_frame, (320, 240))
+                # Optimized resolution - Increased for demo visibility
+                frame = cv2.resize(raw_frame, (960, 720))
                 h, w, _ = frame.shape
                 
                 blink_event_this_frame = False
@@ -111,9 +111,9 @@ def get_vision_pipeline():
                         mouth_color = (0, 0, 255) if mar > 0.6 else (0, 255, 0)
                         draw_box(m_pts, mouth_color, frame)
 
-                        cv2.putText(frame, f"EAR: {ear:.2f}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, eye_color, 1)
-                        cv2.putText(frame, f"MAR: {mar:.2f}", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.4, mouth_color, 1)
-                        cv2.putText(frame, f"Blinks: {blink_total}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+                        cv2.putText(frame, f"EAR: {ear:.2f}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, eye_color, 2)
+                        cv2.putText(frame, f"MAR: {mar:.2f}", (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.7, mouth_color, 2)
+                        cv2.putText(frame, f"Blinks: {blink_total}", (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
                 # 1-second feature aggregation check
                 yielded_features = None

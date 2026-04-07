@@ -4,17 +4,14 @@ import time
 import numpy as np
 from .feature_schema import FEATURE_ORDER
 
-def build_feature_vector(vision_features, session_start_time=None):
+def build_feature_vector(vision_features, telemetry_features=None, session_start_time=None):
     """
     Assembles the 19-dimensional feature vector in the strict PRD order.
     
     Args:
-        vision_features (dict): Dictionary with keys:
-            EAR_mean, EAR_std, EAR_trend, BF, ECD_max, MAR_max, YF, HP_mean, HP_std, GD_ratio
+        vision_features (dict): 10 vision metrics.
+        telemetry_features (dict): 6 driving metrics from the simulator.
         session_start_time (float): Optional timestamp of session start.
-        
-    Returns:
-        list: 19-element feature vector.
     """
     if session_start_time is None:
         session_start_time = time.time() - 300 # Default 5 mins for placeholder
@@ -26,6 +23,9 @@ def build_feature_vector(vision_features, session_start_time=None):
     hour = now.tm_hour + now.tm_min / 60.0
     tod_sin = np.sin(2 * np.pi * hour / 24)
     tod_cos = np.cos(2 * np.pi * hour / 24)
+
+    # Safe telemetry access
+    tel = telemetry_features if telemetry_features else {}
 
     # Construct the raw dictionary
     f = {
@@ -41,13 +41,13 @@ def build_feature_vector(vision_features, session_start_time=None):
         "HP_std": vision_features.get("pitch_std", 0.0),
         "GD_ratio": vision_features.get("gaze_ratio", 0.0),
         
-        # TELEMETRY FEATURES (6) - placeholders until simulator is ready
-        "lane_drift_var": 0.0,
-        "lane_offset_mean": 0.0,
-        "steering_instability": 0.0,
-        "correction_freq": 0.0,
-        "reaction_delay_mean": 0.0,
-        "steering_reversals": 0.0,
+        # TELEMETRY FEATURES (6)
+        "lane_drift_var": tel.get("lane_drift_var", 0.0),
+        "lane_offset_mean": tel.get("lane_offset_mean", 0.0),
+        "steering_instability": tel.get("steering_instability", 0.0),
+        "correction_freq": tel.get("correction_freq", 0.0),
+        "reaction_delay_mean": tel.get("reaction_delay_mean", 0.0),
+        "steering_reversals": tel.get("steering_reversals", 0.0),
         
         # CONTEXT FEATURES (3)
         "session_duration": session_duration,

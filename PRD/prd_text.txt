@@ -1,0 +1,207 @@
+
+PRODUCT REQUIREMENTS DOCUMENT
+Hackathon Project — Smart Infrastructure → Road Safety
+
+Multimodal Driver Fatigue Detection
+Using Driving Simulation and Webcam Monitoring
+
+
+Table of Contents
+
+1. Executive Summary
+Driver fatigue is a leading cause of road accidents worldwide. This project delivers a real-time, multimodal driver fatigue detection system implementable within a 24–48 hour hackathon window. It combines two simultaneous data streams — a web-based driving simulator capturing behavioural telemetry, and a webcam acting as a dashcam capturing physiological signals — and fuses them through a machine learning pipeline to compute a continuous fatigue probability score P(fatigue).
+
+When the score crosses configurable thresholds, the system activates escalating alert mechanisms: controller haptic feedback and mobile phone vibration. This mirrors the architecture used in commercial Advanced Driver-Assistance Systems (ADAS) and smart highway infrastructure.
+
+
+2. Problem Statement
+2.1 The Fatigue Crisis on Roads
+Drowsy driving is responsible for an estimated 1 in 5 fatal road collisions globally. Unlike alcohol impairment, fatigue has no breathalyser equivalent — it must be inferred from indirect signals. Current in-vehicle systems either rely on a single modality (eye tracking alone, or lane-keeping alone), which suffer from high false positive rates, or require expensive proprietary hardware.
+
+2.2 Why Multimodal Detection Matters
+A driver may keep their eyes open while microsleeping (defeating eye-only detection). Equally, a road with many curves may cause natural steering deviation unrelated to fatigue (defeating lane-only detection). Fusing physiological signals with driving behaviour provides a more robust and accurate fatigue estimate, leveraging the complementary nature of both signal types.
+
+2.3 Solution Fit
+This hackathon project demonstrates the feasibility of a software-only, commodity-hardware fatigue detection system using:
+A standard laptop webcam (as dashcam surrogate)
+A web browser-based driving simulation (as vehicle telemetry surrogate)
+An ML fusion layer running in Python on the local machine or a lightweight server
+Readily available alert channels: USB/Bluetooth game controller and smartphone
+
+3. System Architecture
+3.1 High-Level Architecture Overview
+The system is composed of five layers, each independently implementable within the hackathon timeline:
+
+
+3.2 Component Interaction
+The Browser (simulation + webcam capture) communicates with the Python backend via a WebSocket connection. The backend runs the ML pipeline and emits fatigue scores at approximately 2 Hz. The alert engine subscribes to these scores and triggers hardware feedback asynchronously.
+
+
+4. Data Pipeline
+4.1 Camera Pipeline (Vision Modality)
+The camera pipeline transforms raw webcam frames into structured numerical features in the following stages:
+
+Frame Capture — OpenCV VideoCapture reads frames at 30 fps. Frames are resized to 640×480 for processing efficiency.
+Face Detection — MediaPipe Face Detection (BlazeFace) detects the driver's face bounding box. If no face is detected, the frame is skipped and a 'no-face' flag is set.
+Facial Landmark Extraction — MediaPipe FaceMesh returns 468 3D landmarks per frame covering eyes, eyebrows, nose, lips, and face contour.
+Eye Region Extraction — Specific landmark indices (Left eye: 33, 160, 158, 133, 153, 144; Right eye: 362, 385, 387, 263, 373, 380) are used to compute the Eye Aspect Ratio (EAR).
+Mouth Region Extraction — Lip landmarks are used to compute the Mouth Aspect Ratio (MAR) for yawn detection.
+Head Pose Estimation — solvePnP (OpenCV) with a reference 3D face model estimates pitch, yaw, and roll angles from 6 facial landmarks.
+
+4.2 Simulation Pipeline (Driving Telemetry Modality)
+The JavaScript simulator emits a structured JSON event every 100 ms over a WebSocket connection:
+
+
+4.3 Temporal Aggregation — Sliding Window
+Raw per-frame signals are too noisy for direct ML input. Both modalities are aggregated over a 30-second sliding window with a 1-second step. For each window, the following statistics are computed:
+Mean, standard deviation, and trend (linear slope) of each numerical signal
+Blink event count and PERCLOS (percentage of time eyes are >80% closed)
+Lane drift event count (crossings of ±0.3 m threshold)
+Steering reversal count (oscillation proxy for fatigue-related over-correction)
+
+5. Feature Extraction
+5.1 Vision Features
+
+
+5.2 Driving Behaviour Features
+
+
+5.3 Context Features
+Session Duration (minutes) — Fatigue risk scales with driving time
+Time of Day — Circadian rhythm dips at 2–4 AM and 1–3 PM amplify fatigue probability
+Simulated Road Complexity — Straight road baselines vs curve-heavy sections
+
+6. Multimodal Feature Fusion
+6.1 Feature Vector Construction
+At each inference step (every 1 second), the system assembles a single flat feature vector by concatenating the outputs of both pipelines:
+
+
+Time-of-day is encoded as a sine/cosine pair to preserve its cyclic nature (e.g., 23:00 is close to 01:00).
+
+6.2 Why Multimodal Fusion Improves Accuracy
+Each modality has distinct failure modes that the other compensates for:
+
+
+7. Machine Learning Pipeline
+7.1 Model Architecture Options
+Given the hackathon timeline, the recommended primary model is a Gradient Boosting Classifier (LightGBM or XGBoost) trained on the 19-dimensional feature vector. The table below compares candidate architectures:
+
+
+7.2 Training Strategy
+7.2.1 Data Sources
+Since collecting labelled fatigue data in 48 hours is infeasible, the following public datasets should be used for pre-training:
+DROZY Dataset — Physiological drowsiness signals with ground truth labels
+UTA-RLDD — Real-life drowsiness detection with facial video
+NTHU Driver Drowsiness Detection Dataset — Multi-condition drowsiness video
+Synthetic augmentation — use OpenFace to generate EAR/MAR sequences with known labels
+
+7.2.2 Training Pipeline
+Preprocess all dataset frames through the same FaceMesh pipeline to extract feature vectors
+Label encode: alert=0, mildly drowsy=1, moderately drowsy=2, severely drowsy=3
+Train binary classifier (alert vs drowsy) and regression model (0.0–1.0 probability)
+Calibrate probability outputs using Platt scaling to ensure P(fatigue) is well-calibrated
+Evaluate on held-out test split with cross-subject validation
+
+7.3 Model Output
+The model outputs a single scalar: P(fatigue) ∈ [0, 1]. This is a calibrated probability — not a raw logit — enabling direct threshold comparison in the alert engine.
+
+8. Fatigue Decision Engine
+8.1 Threshold Definitions
+The fatigue probability score is mapped to four operational states with escalating alert responses:
+
+
+8.2 Hysteresis Logic
+To prevent alert flickering (rapid on/off transitions at a threshold boundary), a hysteresis mechanism is applied. Once a threshold is crossed upward, the system requires the score to drop 0.08 below the boundary before deactivating the corresponding alert level. This mirrors the Schmitt trigger design used in automotive ECU alarm systems.
+
+8.3 Temporal Smoothing
+The raw per-second ML output is smoothed with an exponential moving average (EMA) with alpha=0.3 before threshold comparison. This suppresses single-frame noise while maintaining sub-3-second response latency to genuine fatigue onset.
+
+9. Alert System
+9.1 Alert Channel 1 — Controller Haptic Feedback
+When the fatigue score exceeds the Mild Fatigue threshold, the game controller's rumble motors are activated via the Gamepad Vibration API (Web Vibration API for browser, or pygame for Python):
+Mild Fatigue: 200 ms pulse every 3 seconds at 40% intensity
+High Fatigue: 500 ms pulse every 1.5 seconds at 70% intensity
+Critical Fatigue: Continuous 80% intensity dual-motor rumble
+
+9.2 Alert Channel 2 — Mobile Phone Vibration
+Phone vibration is triggered via one of the following mechanisms (choose based on hackathon setup):
+OPTION A: PWA Vibration API — the simulation runs as a Progressive Web App on a phone, using navigator.vibrate()
+OPTION B: WebSocket push to phone — A lightweight React Native app subscribes to fatigue score updates and calls Vibration.vibrate()
+OPTION C: Bluetooth LE — FastAPI backend sends a BLE characteristic update to a paired phone running a BLE listener app
+
+9.3 On-Screen Visual Alerts
+The React dashboard overlays progressive warning banners on the simulation:
+Mild Fatigue: Yellow banner — 'Fatigue detected. Take a break soon.'
+High Fatigue: Orange pulsing banner — 'WARNING: High fatigue. Pull over.'
+Critical Fatigue: Red full-screen overlay with countdown — simulation auto-pauses after 5 seconds
+
+
+10. Technical Pipeline Flowchart
+10.1 Step-by-Step Pipeline
+
+
+
+
+
+
+
+
+
+
+
+11. Recommended Technology Stack
+
+
+12. Demo Architecture & Plan
+12.1 Physical Setup
+The demo requires a single laptop with the following connections:
+Built-in or USB webcam facing the participant — acting as dashcam
+USB game controller (Xbox / PlayStation) connected for haptic feedback
+Smartphone connected to the same WiFi network for push vibration alerts
+Browser tab open with the driving simulation + React dashboard
+
+12.2 Demo Flow
+
+
+
+
+
+
+
+
+13. Evaluation Metrics
+13.1 ML Model Metrics
+
+
+13.2 System Performance Metrics
+WebSocket round-trip latency: < 50 ms (localhost)
+FaceMesh frame rate: > 25 fps on mid-range laptop
+End-to-end alert trigger latency: < 4 seconds from fatigue onset
+Controller haptic response latency: < 100 ms from alert state change
+System CPU usage: < 70% on dual-core CPU (leaving headroom for simulation)
+
+14. Risks and Challenges
+
+
+15. Future Scope
+15.1 Real Vehicle Telemetry Integration
+Replace the web simulator with OBD-II dongle data from a real vehicle. CAN bus provides steering angle, speed, lane departure warning signals, and accelerometer data at up to 100 Hz. This makes the system deployable as a true ADAS component.
+
+15.2 Edge AI Deployment
+The ML model can be exported to ONNX and quantised to INT8 for deployment on Raspberry Pi 4 or NVIDIA Jetson Nano, embedded in the vehicle dashboard. MediaPipe Lite and TFLite variants run at 15+ fps on ARM devices.
+
+15.3 Smart Highway Infrastructure Integration
+Aggregated anonymised fatigue events from a vehicle fleet can be streamed to a highway management platform. Heatmaps of high-fatigue road segments (e.g., long straight motorways at 2–4 AM) can inform dynamic speed limit adjustments and roadside rest stop signage.
+
+15.4 LSTM / Transformer Upgrade
+With sufficient labelled data (>10,000 sessions), replacing the tabular model with an LSTM or Temporal Convolutional Network trained on raw 30-second feature sequences would capture fatigue progression patterns more accurately, particularly gradual microsleep onset.
+
+15.5 Multi-Occupant Monitoring
+Extend the webcam pipeline to track multiple faces (e.g., a bus or truck cab with multiple occupants) using MediaPipe Multi-Face Detection. Independent fatigue scores per detected face, with cabin-level aggregate alert.
+
+15.6 Physiological Sensor Fusion
+Integrate wearable biometrics — heart rate variability (HRV), galvanic skin response (GSR), and EEG alpha-wave power — as additional modalities. These are the gold standard for fatigue research and would significantly improve model accuracy beyond the webcam-only baseline.
+
+16. 48-Hour Hackathon Implementation Timeline
+
+

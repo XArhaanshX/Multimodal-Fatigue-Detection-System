@@ -90,7 +90,7 @@ def start_fatigue_pipeline(shared_state, telemetry_lock):
     # State Synchronization
     last_inference_time = 0.0
     current_score = 0.0
-    current_state = "NORMAL"
+    current_state = "normal"
     current_color = (0, 255, 0)
     sim_status = "WAITING"
 
@@ -175,24 +175,24 @@ def start_fatigue_pipeline(shared_state, telemetry_lock):
                 current_score = smoother.update(refined_score)
 
                 # 7. Fatigue State Mapping (Step 9 PRD Thresholds)
-                new_state = "NORMAL"
-                if current_score >= 0.75: new_state = "CRITICAL"
-                elif current_score >= 0.55: new_state = "HIGH"
-                elif current_score >= 0.30: new_state = "MILD"
+                new_state = "normal"
+                if current_score >= 0.75: new_state = "critical"
+                elif current_score >= 0.55: new_state = "severe"
+                elif current_score >= 0.30: new_state = "mild"
                 
                 # Apply 0.05 Hysteresis
-                if current_state == "CRITICAL" and current_score >= 0.70: current_state = "CRITICAL"
-                elif current_state == "HIGH" and current_score >= 0.50:
-                    current_state = "CRITICAL" if new_state == "CRITICAL" else "HIGH"
-                elif current_state == "MILD" and current_score >= 0.25:
-                    current_state = new_state if new_state in ["CRITICAL", "HIGH"] else "MILD"
+                if current_state == "critical" and current_score >= 0.70: current_state = "critical"
+                elif current_state == "severe" and current_score >= 0.50:
+                    current_state = "critical" if new_state == "critical" else "severe"
+                elif current_state == "mild" and current_score >= 0.25:
+                    current_state = new_state if new_state in ["critical", "severe"] else "mild"
                 else: current_state = new_state
 
                 # Update HUD Colors
-                if current_state == "NORMAL": current_color = (0, 255, 0)
-                elif current_state == "MILD": current_color = (0, 255, 255)
-                elif current_state == "HIGH": current_color = (0, 165, 255)
-                elif current_state == "CRITICAL": current_color = (0, 0, 255)
+                if current_state == "normal": current_color = (0, 255, 0)
+                elif current_state == "mild": current_color = (0, 255, 255)
+                elif current_state == "severe": current_color = (0, 165, 255)
+                elif current_state == "critical": current_color = (0, 0, 255)
                 
                 # 8. Feedback to Simulation
                 shared_state["latest_fatigue_score"] = float(current_score)
@@ -201,7 +201,7 @@ def start_fatigue_pipeline(shared_state, telemetry_lock):
 
                 # 9. Console Logging
                 print("\n" + "="*45)
-                print(f"[PROGRESSIVE] State: {current_state} | Score: {current_score:.4f}")
+                print(f"[PROGRESSIVE] State: {current_state.upper()} | Score: {current_score:.4f}")
                 print(f"[PROGRESSIVE] Vision: EAR={vision_dict['EAR_mean']:.2f} | MAR={vision_dict['MAR_max']:.2f} | ECD={vision_dict.get('ECD_max', 0.0):.2f}")
                 print(f"[PROGRESSIVE] Tel: Drift={telemetry_snapshot.get('lane_drift_var', 0.0):.2f} | Steering={telemetry_snapshot.get('steering_instability', 0.0):.2f}")
                 print(f"[PROGRESSIVE] ML Prob: {raw_prob:.4f} | Sim: {sim_status} | Yawns: {yawn_accumulator} (Total: {new_yawn_total})")

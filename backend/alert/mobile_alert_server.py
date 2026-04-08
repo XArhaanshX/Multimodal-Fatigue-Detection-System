@@ -72,11 +72,11 @@ def build_alert_message(payload: dict[str, Any]) -> dict[str, Any]:
     else:
         alert = bool(explicit_alert)
 
-    if fatigue_state not in {"NORMAL", "MILD", "HIGH", "CRITICAL"}:
+    if fatigue_state not in {"NORMAL", "MILD", "SEVERE", "CRITICAL"}:
         if fatigue_score >= 0.75 or erratic_score >= 0.85:
             fatigue_state = "CRITICAL"
         elif fatigue_score >= 0.55 or erratic_score >= 0.70:
-            fatigue_state = "HIGH"
+            fatigue_state = "SEVERE"  # Aligned with main pipeline
         elif fatigue_score >= 0.30 or erratic_score >= 0.45:
             fatigue_state = "MILD"
         else:
@@ -86,7 +86,7 @@ def build_alert_message(payload: dict[str, Any]) -> dict[str, Any]:
     if alert and not pattern:
         pattern = [500, 180, 500, 180, 700] if fatigue_state == "CRITICAL" else [250, 120, 250]
 
-    return {
+    alert_msg = {
         "type": "driver_alert",
         "alert": alert,
         "state": fatigue_state,
@@ -98,6 +98,10 @@ def build_alert_message(payload: dict[str, Any]) -> dict[str, Any]:
         "timestamp": time.time(),
         "message": str(payload.get("message", "")).strip(),
     }
+    
+    # Section 2: Investigate Critical Score Locking
+    print(f"[DEBUG] mobile_broadcast_score: {fatigue_score:.4f} | alert: {alert} | state: {fatigue_state}")
+    return alert_msg
 
 
 async def broadcast_to_mobile_clients(payload: dict[str, Any]) -> None:

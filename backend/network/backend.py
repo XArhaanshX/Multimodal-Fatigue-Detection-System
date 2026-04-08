@@ -90,11 +90,10 @@ async def telemetry_ws(ws: WebSocket):
 
             # 4. Multimodal Inference & Rate-Limited Feedback
             try:
-                if model and features:
-                    # Fusion: Vision (from shared state) + Telemetry (curr window)
-                    vector = build_feature_vector(vision_snapshot, features)
-                    fatigue_score = model.predict(vector)
-                    fatigue_state = get_fatigue_state(fatigue_score)
+                    # Single Source of Truth: Pull stabilized score from shared state
+                    with telemetry_lock:
+                        fatigue_score = shared_state["latest_fatigue_score"]
+                        fatigue_state = shared_state["fatigue_state"]
 
                     current_time = time.time()
                     if current_time - last_send_time >= SEND_INTERVAL:
@@ -106,6 +105,7 @@ async def telemetry_ws(ws: WebSocket):
                         }
                         await ws.send_json(response)
                         last_send_time = current_time
+                        print(f"[DEBUG] websocket_sent_score: {fatigue_score:.4f} | state: {fatigue_state}")
 
             except Exception as e:
                 print(f"[ERROR] Inference failed: {e}")

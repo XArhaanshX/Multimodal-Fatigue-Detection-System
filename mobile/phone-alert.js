@@ -27,7 +27,7 @@ let lastAlertActive = false;
 let lastVibrateAt = 0;
 
 function fmtPercent(value) {
-  return `${Math.round((Number(value) || 0) * 100)}%`;
+  return `${((Number(value) || 0) * 100).toFixed(1)}%`;
 }
 
 function fmtTime(ts) {

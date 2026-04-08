@@ -135,8 +135,9 @@ def get_vision_pipeline():
                     if features:
                         features["blink_total"] = blink_total
                         features["yawn_total"]  = yawn_total
-                        # Flag if any yawn happened in this 1s window
+                        # Flag if any yawn/blink happened in this 1s window
                         features["yawn_event_this_window"] = any(f["yawn"] for f in window)
+                        features["blink_event_this_window"] = any(f["blink"] for f in window)
                         yielded_features = features
                     last_aggregation_time = current_time
 

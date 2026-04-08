@@ -9,16 +9,30 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from run_fatigue_pipeline import start_fatigue_pipeline
     from network.state import shared_state, telemetry_lock
-except ImportError as e:
-    # Fallback pathing for different execution contexts
+except ImportError:
+    # Fallback for alternative execution contexts
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from state import shared_state, telemetry_lock
-    import sys
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from run_fatigue_pipeline import start_fatigue_pipeline
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+try:
+    from ml.fatigue_model import FatigueModel
+    from ml.features import build_feature_vector
+    model = FatigueModel()
+except Exception as e:
+    print(f"[ERROR] Failed to load Fatigue Model: {e}")
+    model = None
+
+def get_fatigue_state(score: float) -> str:
+    """Map fatigue probability to state string per PRD thresholds."""
+    if score < 0.30: return "normal"
+    if score < 0.55: return "mild"
+    if score < 0.75: return "severe"
+    return "critical"
 
 # ── Sliding window buffer (30s at 10Hz = 300 samples) ─────
 WINDOW = 300
@@ -53,37 +67,53 @@ async def telemetry_ws(ws: WebSocket):
     await ws.accept()
     print("[INFO] Godot Simulator connected.")
     
+    last_send_time = 0
+    SEND_INTERVAL = 0.67  # Send at ~1.5 Hz
+    
     try:
         while True:
-            raw = await ws.receive_text()
-            data = json.loads(raw)
+            # 1. Receive telemetry from Godot
+            data = await ws.receive_json()
             
-            # 1. Update rolling buffer
+            # 2. Update rolling buffer & compute aggregated features
             telemetry_buffer.append(data)
             if len(telemetry_buffer) > WINDOW:
                 telemetry_buffer.pop(0)
 
-            # 2. Compute higher-level features for the ML model
             features = compute_features(telemetry_buffer)
             
-            # 3. Thread-safe update of shared state
+            # 3. Thread-safe update of shared state for vision pipeline tracking
             with telemetry_lock:
                 if features:
                     shared_state["telemetry"].update(features)
-                    # DEBUG: print(f"[DEBUG] Telemetry fused: Drift={features['lane_drift_var']:.2f}")
-                
                 shared_state["last_telemetry_time"] = time.time()
-                
-                # Snapshot of current vision-calculated results
-                current_score = shared_state["latest_fatigue_score"]
-                current_alert = shared_state["alert"]
+                vision_snapshot = shared_state.get("latest_vision_features", {}).copy()
 
-            # 4. Respond with the LATEST fatigue data from the vision pipeline
-            await ws.send_text(json.dumps({
-                "fatigue_score": round(float(current_score), 4),
-                "alert": bool(current_alert),
-                "status": "active"
-            }))
+            # 4. Multimodal Inference & Rate-Limited Feedback
+            try:
+                if model and features:
+                    # Fusion: Vision (from shared state) + Telemetry (curr window)
+                    vector = build_feature_vector(vision_snapshot, features)
+                    fatigue_score = model.predict(vector)
+                    fatigue_state = get_fatigue_state(fatigue_score)
+
+                    current_time = time.time()
+                    if current_time - last_send_time >= SEND_INTERVAL:
+                        response = {
+                            "type": "fatigue_update",
+                            "fatigue_score": round(float(fatigue_score), 4),
+                            "fatigue_state": fatigue_state,
+                            "timestamp": current_time
+                        }
+                        await ws.send_json(response)
+                        last_send_time = current_time
+
+            except Exception as e:
+                print(f"[ERROR] Inference failed: {e}")
+                await ws.send_json({
+                    "type": "error",
+                    "message": "fatigue inference failed"
+                })
 
     except WebSocketDisconnect:
         print("[INFO] Godot Simulator disconnected.")

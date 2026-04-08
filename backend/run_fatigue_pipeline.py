@@ -142,6 +142,10 @@ def start_fatigue_pipeline(shared_state, telemetry_lock):
                     "yawn_frequency": features["yawn_total"] / max(1.0, (current_time - session_start_time)/60.0),
                     "gaze_ratio": 0.0
                 }
+                
+                # Update shared state for WebSocket-based inference fusion
+                with telemetry_lock:
+                    shared_state["latest_vision_features"] = vision_dict.copy()
 
                 # 4. Feature Vector Fusion
                 vector = build_feature_vector(vision_dict, telemetry_snapshot, session_start_time)

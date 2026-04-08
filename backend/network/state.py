@@ -21,7 +21,8 @@ shared_state = {
     },
     "latest_fatigue_score": 0.0,
     "alert": False,
-    "last_telemetry_time": 0.0
+    "last_telemetry_time": 0.0,
+    "latest_vision_features": {}  # New: Store vision snapshot for WebSocket inference
 }
 
 # Thread lock for safe telemetry access

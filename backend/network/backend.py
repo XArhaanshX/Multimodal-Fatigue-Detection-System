@@ -70,6 +70,8 @@ async def telemetry_ws(ws: WebSocket):
             with telemetry_lock:
                 if features:
                     shared_state["telemetry"].update(features)
+                    # DEBUG: print(f"[DEBUG] Telemetry fused: Drift={features['lane_drift_var']:.2f}")
+                
                 shared_state["last_telemetry_time"] = time.time()
                 
                 # Snapshot of current vision-calculated results

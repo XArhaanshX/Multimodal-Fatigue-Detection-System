@@ -196,8 +196,9 @@ def start_fatigue_pipeline(shared_state, telemetry_lock):
                 # 9. Console Logging
                 print("\n" + "="*45)
                 print(f"[PROGRESSIVE] State: {current_state} | Score: {current_score:.4f}")
-                print(f"[PROGRESSIVE] Yawns: {yawn_accumulator} (Total: {new_yawn_total})")
-                print(f"[PROGRESSIVE] ML Prob: {raw_prob:.4f} | Sim: {sim_status}")
+                print(f"[PROGRESSIVE] Vision: EAR={vision_dict['EAR_mean']:.2f} | MAR={vision_dict['MAR_max']:.2f}")
+                print(f"[PROGRESSIVE] Tel: Drift={telemetry_snapshot.get('lane_drift_var', 0):.2f} | Steering={telemetry_snapshot.get('steering_instability', 0):.2f}")
+                print(f"[PROGRESSIVE] Status: {sim_status} | Yawns: {yawn_accumulator}")
                 print("="*45)
                 
                 last_inference_time = current_time

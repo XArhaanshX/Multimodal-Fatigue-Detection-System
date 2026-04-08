@@ -135,6 +135,7 @@ def start_fatigue_pipeline(shared_state, telemetry_lock):
                     "EAR_std": features["EAR_std"],
                     "EAR_trend": features["EAR_trend"],
                     "blink_frequency": features["blink_frequency"],
+                    "ECD_max": features.get("ECD_max", 0.0),
                     "MAR_max": min(features["MAR_max"], 1.5),
                     "pitch_mean": features["pitch_mean"],
                     "pitch_std": min(features["pitch_std"], 20.0),
@@ -191,14 +192,15 @@ def start_fatigue_pipeline(shared_state, telemetry_lock):
                 
                 # 8. Feedback to Simulation
                 shared_state["latest_fatigue_score"] = float(current_score)
+                shared_state["fatigue_state"] = current_state
                 shared_state["alert"] = bool(current_score > 0.55)
 
                 # 9. Console Logging
                 print("\n" + "="*45)
                 print(f"[PROGRESSIVE] State: {current_state} | Score: {current_score:.4f}")
-                print(f"[PROGRESSIVE] Vision: EAR={vision_dict['EAR_mean']:.2f} | MAR={vision_dict['MAR_max']:.2f}")
-                print(f"[PROGRESSIVE] Tel: Drift={telemetry_snapshot.get('lane_drift_var', 0):.2f} | Steering={telemetry_snapshot.get('steering_instability', 0):.2f}")
-                print(f"[PROGRESSIVE] Status: {sim_status} | Yawns: {yawn_accumulator}")
+                print(f"[PROGRESSIVE] Vision: EAR={vision_dict['EAR_mean']:.2f} | MAR={vision_dict['MAR_max']:.2f} | ECD={vision_dict.get('ECD_max', 0.0):.2f}")
+                print(f"[PROGRESSIVE] Tel: Drift={telemetry_snapshot.get('lane_drift_var', 0.0):.2f} | Steering={telemetry_snapshot.get('steering_instability', 0.0):.2f}")
+                print(f"[PROGRESSIVE] ML Prob: {raw_prob:.4f} | Sim: {sim_status} | Yawns: {yawn_accumulator} (Total: {new_yawn_total})")
                 print("="*45)
                 
                 last_inference_time = current_time

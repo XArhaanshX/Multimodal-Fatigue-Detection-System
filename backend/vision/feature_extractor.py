@@ -47,19 +47,36 @@ class VisionFeatureExtractor:
         duration_sec = float(timestamps[-1] - timestamps[0])
         blink_frequency = float((blink_count / duration_sec) * 60.0) if duration_sec > 0 else 0.0
 
-        # 3. Mouth Features (Max MAR)
+        # 3. Eye Closure Duration (max contiguous closed duration in seconds)
+        ecd_max = 0.0
+        closed_start = None
+        previous_timestamp = None
+        for timestamp, ear in zip(timestamps, ear_vals):
+            if ear < self.ear_threshold:
+                if closed_start is None:
+                    closed_start = float(timestamp)
+            elif closed_start is not None:
+                end_timestamp = float(previous_timestamp if previous_timestamp is not None else timestamp)
+                ecd_max = max(ecd_max, end_timestamp - closed_start)
+                closed_start = None
+            previous_timestamp = float(timestamp)
+        if closed_start is not None and previous_timestamp is not None:
+            ecd_max = max(ecd_max, previous_timestamp - closed_start)
+
+        # 4. Mouth Features (Max MAR)
         mar_max = float(np.max(mar_vals))
 
-        # 4. Head Pose Features (Mean & Std Pitch)
+        # 5. Head Pose Features (Mean & Std Pitch)
         pitch_mean = float(np.mean(pitch_vals))
         pitch_std = float(np.std(pitch_vals))
 
-        # 5. PERCLOS initialization adn defination
+        # 6. PERCLOS initialization adn defination
         perclos = float(np.mean(ear_vals < self.ear_threshold))
 
         self._validate_ranges({
             "EAR_mean": ear_mean,
             "blink_frequency": blink_frequency,
+            "ECD_max": ecd_max,
             "MAR_max": mar_max,
             "pitch_mean": pitch_mean,
             "pitch_std": pitch_std
@@ -70,6 +87,7 @@ class VisionFeatureExtractor:
             "EAR_std": ear_std,
             "EAR_trend": ear_trend,
             "blink_frequency": blink_frequency,
+            "ECD_max": ecd_max,
             "MAR_max": mar_max,
             "pitch_mean": pitch_mean,
             "pitch_std": pitch_std,
@@ -86,6 +104,9 @@ class VisionFeatureExtractor:
         # Blink_rate → 0 – 60 blinks/min
         if not (0 <= metrics["blink_frequency"] <= 60):
             print(f"[WARNING] Blink_rate out of range: {metrics['blink_frequency']:.1f} (Expected 0 - 60)")
+        # ECD_max -> 0 - 2.5 sec
+        if not (0.0 <= metrics["ECD_max"] <= 2.5):
+            print(f"[WARNING] ECD_max abnormal: {metrics['ECD_max']:.3f} (Expected 0.0 - 2.5)")
         # MAR_max → 0.2 – 1.0
         if not (0.2 <= metrics["MAR_max"] <= 1.0):
             print(f"[WARNING] MAR_max abnormal: {metrics['MAR_max']:.3f} (Expected 0.2 - 1.0)")

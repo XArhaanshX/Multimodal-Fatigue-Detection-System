@@ -1,0 +1,2 @@
+driver_name,driver_phone,emergency_contact_name,emergency_contact_phone,start_time,end_time,max_fatigue_score,critical_event_triggered
+Test Driver,1234567890,Test Contact,0987654321,2026-04-09 10:00:00,2026-04-09 10:10:00,0.85,True

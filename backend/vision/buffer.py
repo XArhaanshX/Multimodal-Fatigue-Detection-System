@@ -10,13 +10,14 @@ class RollingFeatureBuffer:
         self.window_size = window_size_seconds
         self.buffer = []
 
-    def add_frame(self, ear, mar, pitch, blink):
+    def add_frame(self, ear, mar, pitch, blink, yawn):
         """
         Adds a new frame's data to the buffer.
         :param ear: Eye Aspect Ratio (float)
         :param mar: Mouth Aspect Ratio (float)
         :param pitch: Head pitch in degrees (float)
         :param blink: Whether a blink was detected in this frame (bool)
+        :param yawn: Whether a yawn was detected in this frame (bool)
         """
         current_time = time.time()
         entry = {
@@ -24,7 +25,8 @@ class RollingFeatureBuffer:
             "EAR": ear,
             "MAR": mar,
             "pitch": pitch,
-            "blink": blink
+            "blink": blink,
+            "yawn": yawn
         }
         self.buffer.append(entry)
         self._cleanup()

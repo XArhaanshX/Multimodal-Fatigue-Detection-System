@@ -34,6 +34,8 @@ def get_vision_pipeline():
 
     blink_total   = 0
     eye_was_closed = False # For Step 2 hysteresis
+    yawn_total    = 0
+    yawn_active   = False
     prev_pitch = 0.0         
     last_aggregation_time = time.time()
     frame_count = 0
@@ -93,7 +95,17 @@ def get_vision_pipeline():
                             eye_was_closed = False
 
                         is_currently_closed = (ear < EYE_CLOSED_THRESHOLD)
-                        feature_buffer.add_frame(ear, mar, pitch, blink_event_this_frame)
+                        
+                        # New: Hysteresis Yawn Detection
+                        yawn_event_this_frame = False
+                        if mar > 0.6:
+                            yawn_active = True
+                        elif mar < 0.5 and yawn_active:
+                            yawn_total += 1
+                            yawn_event_this_frame = True
+                            yawn_active = False
+
+                        feature_buffer.add_frame(ear, mar, pitch, blink_event_this_frame, yawn_event_this_frame)
 
                         # HUD Drawing
                         def draw_box(pts, color, frame, padding=3):
@@ -122,6 +134,9 @@ def get_vision_pipeline():
                     features = extractor.compute_features(window)
                     if features:
                         features["blink_total"] = blink_total
+                        features["yawn_total"]  = yawn_total
+                        # Flag if any yawn happened in this 1s window
+                        features["yawn_event_this_window"] = any(f["yawn"] for f in window)
                         yielded_features = features
                     last_aggregation_time = current_time
 

@@ -20,6 +20,7 @@ shared_state = {
         "speed_kmh": 0.0
     },
     "latest_fatigue_score": 0.0,
+    "fatigue_state": "NORMAL",
     "alert": False,
     "last_telemetry_time": 0.0,
     "latest_vision_features": {}  # New: Store vision snapshot for WebSocket inference

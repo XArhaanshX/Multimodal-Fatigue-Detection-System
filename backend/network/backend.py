@@ -1,7 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import json, time, threading, sys, os
-import numpy as np
 
 # Ensure project root is in sys.path for relative imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -63,7 +62,6 @@ def compute_features(buf: list) -> dict:
 
 @app.websocket("/ws/telemetry")
 async def telemetry_ws(ws: WebSocket):
-    global telemetry_buffer
     await ws.accept()
     print("[INFO] Godot Simulator connected.")
     

@@ -247,6 +247,37 @@ Demo flow:
 
 ---
 
+#  Running Locally
+
+Requires Python 3.12 (MediaPipe doesn't support 3.14 yet) and a webcam.
+
+```bash
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements.txt
+```
+
+**Run it** (one server for everything, port 8000):
+
+```bash
+.venv/bin/python backend/main.py
+```
+
+Open http://localhost:8000 and follow the three steps: create an account, add an emergency contact, then choose the **camera**, the **driving simulator**, or both. The simulator opens in a new tab. The live fatigue page shows the score, what it is being scored from, and the status of each module.
+
+- **Camera only:** scored from eyes, yawns and head pose (fused model).
+- **Simulator only:** scored from lane keeping, steering and reaction time (driving-only model).
+- **Both:** fused model; if the camera loses your face, scoring falls back to driving data.
+
+In the simulator, steer with the arrow keys, A/D or a gamepad and counter-steer when a wind gust hits. Press `2` or `3` to let an alert or drowsy autopilot drive. Opening http://localhost:8000/sim/ directly also works: it starts a camera-off session that ends when the tab closes. The telemetry socket also accepts raw 10 Hz samples (`lane_offset`, `steering_angle`, ...) from an external simulator such as the original Godot one.
+
+Useful extras:
+
+- `FATIGUE_SHOW_HUD=0` runs without the OpenCV camera window; `FATIGUE_DEBUG=1` prints feature range warnings.
+- `.venv/bin/python scripts/test_stream.py` prints the live score stream; `scripts/test_simulator_connection.py` fakes a simulator.
+- `.venv/bin/python backend/ml/train_model.py` retrains both models (fused and driving-only).
+
+---
+
 #  Key Features
 
 * Real-time fatigue probability scoring
@@ -271,27 +302,18 @@ Demo flow:
 #  Project Structure
 
 ```
-driver-fatigue-detection/
-
 backend/
- ├── main.py
- ├── fatigue_pipeline.py
- ├── websocket_server.py
- └── model/
-
-frontend/
- ├── simulator/
- ├── dashboard/
- └── components/
-
-ml/
- ├── feature_extraction.py
- ├── training_pipeline.py
- └── model.pkl
-
-hardware/
- ├── controller_alerts.py
- └── phone_alert_service.py
+ ├── main.py               FastAPI server: dashboard, simulator, session API, WebSockets
+ ├── session_manager.py    session lifecycle, alert levels, CSV logging
+ ├── monitor.py            1 Hz scoring loop (camera and/or simulator)
+ ├── vision/               webcam, MediaPipe landmarks, EAR/MAR/head pose, 30 s window
+ ├── ml/                   feature schema, models, training, EMA smoothing
+ └── network/              shared state and telemetry aggregation
+dashboard/                 login -> emergency contact -> choose modules -> live score
+simulator/index.html       browser driving simulator (telemetry + alerts)
+data/training_data.csv     synthetic training data
+docs/                      literature review (PDF)
+scripts/                   data generators and test clients
 ```
 
 ---

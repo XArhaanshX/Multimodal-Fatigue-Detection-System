@@ -1,114 +1,121 @@
-import time
 import asyncio
+import time
+
 from .csv_storage import append_session, update_session
-from .pipeline_interface import start_fatigue_pipeline
+from .monitor import FatigueMonitor
+from .network.state import shared_state, telemetry_lock
 from .websocket_manager import manager as ws_manager
+
+CRITICAL_THRESHOLD = 0.75
+CRITICAL_SECONDS = 10  # continuous seconds above threshold before the emergency flag
+
+
+def fatigue_state(score):
+    if score is None:
+        return "WAITING"
+    if score < 0.30:
+        return "NORMAL"
+    if score < 0.55:
+        return "MILD"
+    if score < CRITICAL_THRESHOLD:
+        return "HIGH"
+    return "CRITICAL"
+
 
 class SessionManager:
     def __init__(self):
-        self.current_session = None
-        self.pipeline_running = False
-        self.pipeline_thread = None
-        self.stop_event = None
-        self.loop = None # Will be set by main.py
+        self.session = None
+        self.monitor = None
+        self.loop = None                   # FastAPI event loop, set at startup
+        self.started_by_simulator = False  # simulator-started sessions end when it disconnects
+        self.ending = False                # True while end_session is stopping the monitor
+        self.latest = {}                   # last update broadcast to clients
 
-    def start_session(self, data: dict):
-        """Initializes and starts a fatigue detection session."""
-        if self.pipeline_running:
-            return {"status": "error", "message": "Session already in progress"}
-        
-        print("[INFO] Session started")
-        
-        start_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        data["start_time"] = start_time
-        
-        # Persist to CSV and get row index
-        row_index = append_session(data)
-        
-        # Initialize in-memory state
-        self.current_session = {
+    @property
+    def active(self):
+        return self.monitor is not None
+
+    def start_session(self, data: dict, use_camera=True, started_by_simulator=False):
+        """Starts a session with the camera on or off; driving data is used whenever the simulator sends it."""
+        if self.active:
+            if not (self.started_by_simulator and not started_by_simulator):
+                return {"status": "error", "message": "Session already in progress"}
+            # The dashboard takes over a session the simulator started on its own
+            self.end_session()
+
+        data["start_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.session = {
             "driver_name": data.get("driver_name"),
+            "emergency_contact_name": data.get("emergency_contact_name"),
             "emergency_contact_phone": data.get("emergency_contact_phone"),
+            "camera": use_camera,
             "max_fatigue_score": 0.0,
             "critical_event_triggered": False,
-            "fatigue_above_threshold_duration": 0.0,
-            "csv_row_index": row_index
+            "seconds_above_threshold": 0,
+            "csv_row_index": append_session(data),
         }
-        
-        # Start ML Pipeline
-        self.pipeline_running = True
-        self.pipeline_thread, self.stop_event = start_fatigue_pipeline(self.fatigue_callback)
-        print("[INFO] Pipeline thread launched")
-        
-        return {"status": "success", "session": self.current_session}
+        self.started_by_simulator = started_by_simulator
+        self.latest = {}
+        with telemetry_lock:  # telemetry from a previous session must not count as live
+            shared_state.update(telemetry={}, last_telemetry_time=0.0)
+        self.monitor = FatigueMonitor(use_camera, self._on_update)
+        self.monitor.start()
+        print(f"[INFO] Session started (camera {'on' if use_camera else 'off'}).")
+        return {"status": "success", "session": self.session}
 
     def end_session(self):
-        """Stops the active session and saves final metrics."""
-        if not self.pipeline_running:
+        """Stops the monitor and saves the session's final metrics."""
+        if not self.active:
             return {"status": "error", "message": "No active session to end"}
-        
-        # 1. Stop the pipeline thread
-        if self.stop_event:
-            self.stop_event.set()
-        if self.pipeline_thread:
-            self.pipeline_thread.join(timeout=5)
-            
-        # 2. Update CSV with final values
-        end_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        update_data = {
-            "end_time": end_time,
-            "max_fatigue_score": round(self.current_session["max_fatigue_score"], 4),
-            "critical_event_triggered": self.current_session["critical_event_triggered"]
-        }
-        update_session(self.current_session["csv_row_index"], update_data)
-        
-        # 3. Reset state
-        self.pipeline_running = False
-        self.current_session = None
-        self.pipeline_thread = None
-        self.stop_event = None
-        
-        print("[INFO] Session ended")
+        self.ending = True
+        self.monitor.stop()
+        update_session(self.session["csv_row_index"], {
+            "end_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "max_fatigue_score": round(self.session["max_fatigue_score"], 4),
+            "critical_event_triggered": self.session["critical_event_triggered"],
+        })
+        with telemetry_lock:
+            shared_state.update(latest_fatigue_score=None, fatigue_state="WAITING", vision_status="off")
+        self.monitor = None
+        self.session = None
+        self.started_by_simulator = False
+        self.ending = False
+        print("[INFO] Session ended.")
+        self._broadcast({"session_active": False})
         return {"status": "success"}
 
-    def fatigue_callback(self, score: float):
-        """Handle incoming score from ML pipeline (called from thread)."""
-        if not self.current_session:
+    def _on_update(self, update):
+        """Called by the monitor thread once per second."""
+        session = self.session
+        if not session:
             return
+        score = update["score"]
+        state = fatigue_state(score)
 
-        # 1. Update max fatigue score observed
-        if score > self.current_session["max_fatigue_score"]:
-            self.current_session["max_fatigue_score"] = score
-            
-        # 2. Continuous threshold exceedance logic
-        # Pipeline produces scores ≈1Hz, so dt ≈ 1.0s
-        if score > 0.75:
-            self.current_session["fatigue_above_threshold_duration"] += 1.0
-        else:
-            self.current_session["fatigue_above_threshold_duration"] = 0.0
-            
-        # 3. Trigger Critical Fatigue Alert
-        if self.current_session["fatigue_above_threshold_duration"] >= 10.0 and not self.current_session["critical_event_triggered"]:
-            self.current_session["critical_event_triggered"] = True
-            print("\n" + "!" * 45)
-            print("CRITICAL FATIGUE DETECTED — CONTACTING EMERGENCY CONTACT")
-            print("!" * 45 + "\n")
-            # NOTE: Logic for future Twilio SMS call would be inserted here
+        if score is not None:
+            session["max_fatigue_score"] = max(session["max_fatigue_score"], score)
+            session["seconds_above_threshold"] = session["seconds_above_threshold"] + 1 if score > CRITICAL_THRESHOLD else 0
+            if session["seconds_above_threshold"] >= CRITICAL_SECONDS and not session["critical_event_triggered"]:
+                session["critical_event_triggered"] = True
+                print("[ALERT] Critical fatigue for 10 s: emergency contact would be notified here.")
 
-        # 4. Determine fatigue state mapping
-        if score < 0.30: state = "NORMAL"
-        elif score < 0.55: state = "MILD"
-        elif score < 0.75: state = "HIGH"
-        else: state = "CRITICAL"
-        
-        # 5. Broadcast to WebSocket clients
-        payload = {
-            "fatigue_score": round(score, 4),
-            "fatigue_state": state
-        }
-        
-        # Use thread-safe coroutine scheduling back to the main FastAPI loop
+        with telemetry_lock:
+            shared_state.update(latest_fatigue_score=score, fatigue_state=state, vision_status=update["camera_status"])
+
+        self._broadcast({
+            "session_active": True,
+            "fatigue_score": None if score is None else round(score, 4),
+            "fatigue_state": state,
+            "source": update["source"],
+            "camera_status": update["camera_status"],
+            "simulator_connected": update["simulator_connected"],
+            "critical_event_triggered": session["critical_event_triggered"],
+        })
+
+    def _broadcast(self, payload):
+        self.latest = payload
         if self.loop:
             asyncio.run_coroutine_threadsafe(ws_manager.broadcast(payload), self.loop)
+
 
 session_manager = SessionManager()

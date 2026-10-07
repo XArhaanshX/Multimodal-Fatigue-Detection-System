@@ -9,7 +9,7 @@ async def simulate_godot():
     Simulates the Godot driving simulator by sending high-frequency telemetry
     and receiving rate-limited fatigue updates.
     """
-    uri = "ws://localhost:8001/ws/telemetry"
+    uri = "ws://localhost:8000/ws/telemetry"
     print(f"Connecting to IRoad Telemetry Server at {uri}...")
     
     try:
@@ -62,10 +62,11 @@ async def simulate_godot():
                         
                         if data.get("type") == "fatigue_update":
                             score = data["fatigue_score"]
-                            state = data["fatigue_state"]
-                            print(f"\n[SERVER] Update (@{interval:.2f}s): Score={score:.4f} | State={state.upper()}")
-                            
-                            if state in ["severe", "critical"]:
+                            state = data["fatigue_state"].lower()
+                            score_text = "waiting" if score is None else f"{score:.4f}"
+                            print(f"\n[SERVER] Update (@{interval:.2f}s): Score={score_text} | State={state.upper()}")
+
+                            if state in ["high", "critical"]:
                                 print(">>> !!! DRIVER ALERT: HAPTIC FEEDBACK TRIGGERED !!! <<<")
                         elif data.get("type") == "error":
                             print(f"\n[SERVER ERROR] {data['message']}")
@@ -80,7 +81,7 @@ async def simulate_godot():
             await asyncio.gather(send_telemetry(), receive_updates())
                 
     except ConnectionRefusedError:
-        print(f"[ERROR] Connection refused. Is backend/network/backend.py running?")
+        print(f"[ERROR] Connection refused. Is backend/main.py running?")
     except Exception as e:
         print(f"[ERROR] Unexpected error: {e}")
 

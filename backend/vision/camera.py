@@ -8,20 +8,25 @@ def start_camera():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-    while True:
-        if not cap.isOpened():
-            print("[WARNING] Camera failed to open. Retrying...")
-            cap = cv2.VideoCapture(0)
-            time.sleep(1.0)
-            continue
+    try:
+        while True:
+            if not cap.isOpened():
+                print("[WARNING] Camera failed to open. Retrying...")
+                cap.release()
+                cap = cv2.VideoCapture(0)
+                # Yield so consumers can still check stop conditions while we wait
+                yield None
+                time.sleep(1.0)
+                continue
 
-        ret, frame = cap.read()
-        if not ret:
-            print("[WARNING] Failed to capture frame. Camera may be busy.")
-            yield None
-            time.sleep(0.1) # Prevent CPU flooding
-            continue
+            ret, frame = cap.read()
+            if not ret:
+                print("[WARNING] Failed to capture frame. Camera may be busy.")
+                yield None
+                time.sleep(0.1) # Prevent CPU flooding
+                continue
 
-        yield frame
-
-    cap.release()
+            yield frame
+    finally:
+        # Free the device when the generator is closed so a new session can reopen it
+        cap.release()

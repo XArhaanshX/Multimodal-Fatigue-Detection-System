@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fatigue Monitor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500&display=swap" rel="stylesheet" />
+  <link href="style.css" rel="stylesheet" />
+</head>
+<body>
+  <main class="card wide">
+    <div id="live">
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <span class="step">Live fatigue score</span>
+        <div class="score">
+          <span class="score-value" id="score">–</span>
+          <span class="badge" id="state">Waiting</span>
+        </div>
+        <div class="bar"><div id="bar"></div></div>
+        <p class="hint" id="note">Starting…</p>
+        <div class="banner" id="critical" hidden>Critical fatigue for 10 seconds. Your emergency contact has been flagged.</div>
+        <dl class="status">
+          <dt>Camera</dt><dd><span class="dot" id="cameraDot"></span><span id="camera">–</span></dd>
+          <dt>Simulator</dt><dd><span class="dot" id="simDot"></span><span id="sim">–</span></dd>
+          <dt>Emergency contact</dt><dd id="contact">–</dd>
+        </dl>
+        <div class="actions">
+          <button class="secondary" id="openSim">Open simulator</button>
+          <button id="endBtn">End session</button>
+        </div>
+      </div>
+    </div>
+    <div id="idle" hidden style="display:flex; flex-direction:column; gap:16px;">
+      <h1>No active session</h1>
+      <p class="hint">Start the camera, the simulator or both to see your fatigue score.</p>
+      <div class="actions"><a class="button" href="start.html">Start monitoring</a></div>
+    </div>
+  </main>
+  <script src="api.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const CAMERA = {
+      off: ['Off', ''], starting: ['Starting…', 'warn'], no_camera: ["Can't open the webcam", 'bad'],
+      no_face: ['No face found: look at the camera, light on your face', 'warn'], tracking: ['Tracking your face', 'ok'],
+    };
+    const NOTES = {
+      'camera+simulator': 'Scoring from your face and your driving.',
+      camera: 'Scoring from your face.',
+      simulator: 'Scoring from your driving.',
+    };
+    const COLORS = { NORMAL: 'var(--normal)', MILD: 'var(--mild)', HIGH: 'var(--high)', CRITICAL: 'var(--critical)' };
+
+    const contact = loadDraft('contact');
+    $('contact').textContent = contact ? `${fullName(contact)} · ${contact.phone}` : 'Not set';
+    $('openSim').onclick = () => window.open(API_BASE + '/sim/', '_blank');
+    $('endBtn').onclick = async () => {
+      $('endBtn').disabled = true;
+      try { await apiPost('/session/end'); } finally { location.href = 'start.html'; }
+    };
+
+    function render(u) {
+      const active = u.session_active !== false;
+      $('live').hidden = !active;
+      $('idle').hidden = active;
+      if (!active || !('fatigue_state' in u)) return;
+
+      const waiting = u.fatigue_score === null || u.fatigue_score === undefined;
+      $('score').textContent = waiting ? '–' : u.fatigue_score.toFixed(2);
+      $('state').textContent = waiting ? 'Waiting' : u.fatigue_state;
+      $('state').className = 'badge ' + (waiting ? '' : u.fatigue_state);
+      $('bar').style.width = waiting ? '0' : Math.min(100, u.fatigue_score * 100) + '%';
+      $('bar').style.background = COLORS[u.fatigue_state] || COLORS.NORMAL;
+      $('note').textContent = NOTES[u.source] || 'Waiting for your face or the simulator.';
+      $('critical').hidden = !u.critical_event_triggered;
+
+      const [cameraText, cameraLevel] = CAMERA[u.camera_status] || CAMERA.off;
+      $('camera').textContent = cameraText;
+      $('cameraDot').className = 'dot ' + cameraLevel;
+      $('sim').textContent = u.simulator_connected ? 'Connected' : 'Not connected';
+      $('simDot').className = 'dot ' + (u.simulator_connected ? 'ok' : '');
+    }
+
+    function connect() {
+      const ws = new WebSocket(WS_BASE + '/ws/fatigue-score');
+      ws.onmessage = (event) => render(JSON.parse(event.data));
+      ws.onclose = () => { $('note').textContent = 'Reconnecting to the backend…'; setTimeout(connect, 2000); };
+    }
+
+    apiGet('/session/status').then((s) => render(s.active ? (s.latest || {}) : { session_active: false }))
+      .catch(() => { $('note').textContent = 'Backend offline.'; });
+    connect();
+  </script>
+</body>
+</html>

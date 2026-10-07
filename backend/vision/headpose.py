@@ -78,11 +78,16 @@ def estimate_head_pose(landmarks, frame):
     angles = res[0] # angles in degrees (X, Y, Z)
     
     pitch = float(angles[0])
-    
+    # MODEL_POINTS are y-up while image coordinates are y-down, so the decomposition
+    # reports a level head as roughly ±180°. Wrap into [-90, 90] so level reads as ~0°
+    # and small nods don't jump between +179° and -179°.
+    if pitch > 90.0:
+        pitch -= 180.0
+    elif pitch < -90.0:
+        pitch += 180.0
+
     if DEBUG_POSE:
         print(f"ROT_VEC: {rotation_vector.flatten()}")
         print(f"RAW_PITCH: {pitch:.2f}")
-
-    return pitch, float(angles[1]), float(angles[2])
 
     return pitch, float(angles[1]), float(angles[2])

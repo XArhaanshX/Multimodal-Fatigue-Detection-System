@@ -1,26 +1,21 @@
 import cv2
 import time
 import numpy as np
-try:
-    from .camera import start_camera
-    from .facemesh import FaceMeshDetector
-    from .features import eye_aspect_ratio, mouth_aspect_ratio, EYE_CLOSED_THRESHOLD, EYE_OPEN_THRESHOLD
-    from .headpose import estimate_head_pose
-    from .buffer import RollingFeatureBuffer
-    from .feature_extractor import VisionFeatureExtractor, build_feature_vector
-except (ImportError, ValueError):
-    from vision.camera import start_camera
-    from vision.facemesh import FaceMeshDetector
-    from vision.features import eye_aspect_ratio, mouth_aspect_ratio, EYE_CLOSED_THRESHOLD, EYE_OPEN_THRESHOLD
-    from vision.headpose import estimate_head_pose
-    from vision.buffer import RollingFeatureBuffer
-    from vision.feature_extractor import VisionFeatureExtractor, build_feature_vector
+from .camera import start_camera
+from .facemesh import FaceMeshDetector
+from .features import eye_aspect_ratio, mouth_aspect_ratio, EYE_CLOSED_THRESHOLD, EYE_OPEN_THRESHOLD
+from .headpose import estimate_head_pose
+from .buffer import RollingFeatureBuffer
+from .feature_extractor import VisionFeatureExtractor
 
 
 LEFT_EYE  = [33, 160, 158, 133, 153, 144]
 RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 
 MOUTH_MAR_INDICES = [13, 14, 82, 87, 312, 317, 61, 291]
+
+# Live status for UIs: whether frames are arriving and when a face was last seen
+VISION_STATUS = {"camera_ok": None, "last_face_time": 0.0}
 
 def get_vision_pipeline():
     """
@@ -42,11 +37,13 @@ def get_vision_pipeline():
 
     # Safety wrapper
     while True:
+        camera = start_camera()
         try:
-            for raw_frame in start_camera():
+            for raw_frame in camera:
                 current_time = time.time()
                 
                 # Handling missing camera frame
+                VISION_STATUS["camera_ok"] = raw_frame is not None
                 if raw_frame is None:
                     frame = np.zeros((720, 960, 3), dtype=np.uint8)
                     cv2.putText(frame, "CAMERA NOT READY", (250, 360), 
@@ -67,6 +64,7 @@ def get_vision_pipeline():
                     landmarks = detector.get_landmarks(frame)
 
                     if landmarks is not None:
+                        VISION_STATUS["last_face_time"] = current_time
                         coords = []
                         for lm in landmarks:
                             x, y = int(lm.x * w), int(lm.y * h)
@@ -135,9 +133,10 @@ def get_vision_pipeline():
                     if features:
                         features["blink_total"] = blink_total
                         features["yawn_total"]  = yawn_total
-                        # Flag if any yawn/blink happened in this 1s window
-                        features["yawn_event_this_window"] = any(f["yawn"] for f in window)
-                        features["blink_event_this_window"] = any(f["blink"] for f in window)
+                        # Flag if any yawn/blink happened since the last aggregation (not the whole 30 s window)
+                        recent = [f for f in window if f["timestamp"] >= last_aggregation_time]
+                        features["yawn_event_this_window"] = any(f["yawn"] for f in recent)
+                        features["blink_event_this_window"] = any(f["blink"] for f in recent)
                         yielded_features = features
                     last_aggregation_time = current_time
 
@@ -147,6 +146,8 @@ def get_vision_pipeline():
         except Exception as e:
             print(f"[ERROR] Pipeline error: {e}. Retrying...")
             time.sleep(1)
+        finally:
+            camera.close()
 
 if __name__ == "__main__":
     print("[INFO] Starting Vision Module (Step 2 Hysteresis)...")

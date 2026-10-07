@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+websockets
+pydantic
+numpy
+pandas
+scikit-learn==1.8.*
+lightgbm
+joblib
+opencv-python
+mediapipe

@@ -70,37 +70,30 @@ def extract_raw_telemetry(sample):
 
 def compute_window_features(samples):
     """
-    Aggregates raw telemetry when lane offset and steering angle are available.
+    Aggregates raw telemetry into the training units used by simulator/index.html:
+    metres, seconds, and counts per 10 s.
     """
     if len(samples) < 2:
         return {}
 
     raw_samples = [entry["data"] for entry in samples]
-    if not all("lane_offset" in sample for sample in raw_samples):
-        return {}
-    if not all("steering_angle" in sample for sample in raw_samples):
+    if not all("lane_offset" in s and "steering_angle" in s for s in raw_samples):
         return {}
 
-    lane_offset = np.array([float(sample["lane_offset"]) for sample in raw_samples], dtype=float)
-    steering_angle = np.array([float(sample["steering_angle"]) for sample in raw_samples], dtype=float)
-
-    steering_mean = float(np.mean(steering_angle))
-    steering_std = float(np.std(steering_angle))
-    if abs(steering_mean) < 1e-3:
-        steering_instability = steering_std
-    else:
-        steering_instability = steering_std / abs(steering_mean)
+    lane_offset = np.array([float(s["lane_offset"]) for s in raw_samples], dtype=float)
+    steering_angle = np.array([float(s["steering_angle"]) for s in raw_samples], dtype=float)
+    span_10s = max(1.0, samples[-1]["timestamp"] - samples[0]["timestamp"]) / 10.0
 
     steering_reversals = 0.0
     if len(steering_angle) >= 3:
-        steering_reversals = float(np.sum(np.diff(np.sign(np.diff(steering_angle))) != 0))
+        steering_reversals = float(np.sum(np.diff(np.sign(np.diff(steering_angle))) != 0)) / span_10s
 
     return {
-        "lane_offset_mean": float(np.mean(lane_offset)),
+        "lane_offset_mean": float(np.mean(np.abs(lane_offset))),
         "lane_drift_var": float(np.var(lane_offset)),
-        "steering_instability": float(steering_instability),
-        "correction_freq": _mean_optional(raw_samples, "steering_correction_hz"),
-        "reaction_delay_mean": _mean_optional(raw_samples, "reaction_delay_ms"),
+        "steering_instability": float(np.std(steering_angle)),
+        "correction_freq": _mean_optional(raw_samples, "steering_correction_hz") * 10.0,
+        "reaction_delay_mean": _mean_optional(raw_samples, "reaction_delay_ms") / 1000.0,
         "steering_reversals": steering_reversals,
     }
 

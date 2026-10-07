@@ -22,6 +22,6 @@ class ConnectionManager:
                 await connection.send_json(message)
             except Exception:
                 # Silently handle disconnected clients that haven't been removed yet
-                self.active_connections.remove(connection)
+                self.disconnect(connection)
 
 manager = ConnectionManager()

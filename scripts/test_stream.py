@@ -12,8 +12,12 @@ async def listen_to_fatigue():
                 message = await websocket.recv()
                 data = json.loads(message)
                 score = data.get("fatigue_score")
-                state = data.get("fatigue_state")
-                print(f"[LIVE] Score: {score:.4f} | State: {state}")
+                if not data.get("session_active"):
+                    print("[LIVE] No active session")
+                    continue
+                score_text = "waiting" if score is None else f"{score:.4f}"
+                print(f"[LIVE] Score: {score_text} | State: {data.get('fatigue_state')} | "
+                      f"camera: {data.get('camera_status')} | simulator: {data.get('simulator_connected')}")
     except Exception as e:
         print(f"Error: {e}")
         print("Note: Make sure the server (main.py) is running first!")

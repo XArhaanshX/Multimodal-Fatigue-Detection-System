@@ -2,14 +2,24 @@ import pandas as pd
 import lightgbm as lgb
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix, classification_report
-import pickle
+import joblib
 import os
+import sys
 
-# Ensure model directory exists
-os.makedirs('backend/ml/model', exist_ok=True)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from backend.ml.feature_schema import FEATURE_ORDER, DRIVING_FEATURE_ORDER
 
-def train_model():
-    data_path = 'data/training_data.csv'
+# Resolve paths from this file so the script works from any working directory
+ML_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(ML_DIR))
+MODEL_DIR = os.path.join(ML_DIR, 'model')
+
+# Fused camera + simulator model, and a driving-only model for simulator sessions without the camera
+MODELS = [("fatigue_model.pkl", FEATURE_ORDER), ("fatigue_model_driving.pkl", DRIVING_FEATURE_ORDER)]
+
+
+def train_model(filename, features):
+    data_path = os.path.join(PROJECT_ROOT, 'data', 'training_data.csv')
     if not os.path.exists(data_path):
         print(f"[ERROR] Training data not found at {data_path}")
         return
@@ -17,7 +27,7 @@ def train_model():
     print(f"[INFO] Loading training data from {data_path}...")
     df = pd.read_csv(data_path)
     
-    X = df.drop(columns=['target'])
+    X = df[features]
     y = df['target']
     
     # Feature names check (should match FEATURE_ORDER)
@@ -49,7 +59,7 @@ def train_model():
     cm = confusion_matrix(y_test, y_pred)
     
     print("\n" + "="*30)
-    print("      MODEL PERFORMANCE")
+    print(f"      MODEL PERFORMANCE ({filename})")
     print("="*30)
     print(f"Accuracy:  {accuracy:.4f}")
     print(f"ROC-AUC:   {roc_auc:.4f}")
@@ -60,11 +70,12 @@ def train_model():
     print("="*30)
     
     # Export Model
-    model_path = 'backend/ml/model/fatigue_model.pkl'
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    model_path = os.path.join(MODEL_DIR, filename)
     print(f"[INFO] Exporting model to {model_path}...")
-    with open(model_path, 'wb') as f:
-        pickle.dump(clf, f)
+    joblib.dump(clf, model_path)
     print("[SUCCESS] Model training and export complete.")
 
 if __name__ == "__main__":
-    train_model()
+    for filename, features in MODELS:
+        train_model(filename, features)

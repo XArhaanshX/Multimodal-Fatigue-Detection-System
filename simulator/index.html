@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>IRoad Driving Simulator</title>
+<style>
+  :root {
+    --panel: rgba(12, 14, 18, 0.78);
+    --text: #f2f4f7;
+    --muted: #9aa3ae;
+    --normal: #2ea043;
+    --mild: #c8a014;
+    --high: #e66e14;
+    --critical: #d72828;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #0b0d10; color: var(--text); font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+
+  .panel { position: fixed; background: var(--panel); border-radius: 12px; padding: 12px 14px; backdrop-filter: blur(8px); }
+  #hud { top: 16px; left: 16px; min-width: 210px; }
+  #fatigue { top: 16px; right: 16px; width: 240px; }
+  #features { bottom: 16px; left: 16px; font: 12px/1.5 ui-monospace, monospace; color: var(--muted); }
+  #help { bottom: 16px; right: 16px; color: var(--muted); font-size: 12px; max-width: 300px; }
+  .row { display: flex; justify-content: space-between; gap: 16px; }
+  .label { color: var(--muted); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--critical); }
+  .dot.on { background: var(--normal); }
+  kbd { background: rgba(255,255,255,0.12); border-radius: 4px; padding: 0 5px; font: inherit; color: var(--text); }
+
+  #score { font-size: 32px; font-weight: 600; }
+  #state { font-weight: 600; letter-spacing: 0.04em; }
+  .bar { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.12); margin-top: 8px; overflow: hidden; }
+  #barFill { height: 100%; width: 0; background: var(--normal); transition: width 0.4s, background 0.4s; }
+
+  #vignette { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.4s;
+              box-shadow: inset 0 0 180px 60px var(--high); }
+  #vignette.on { opacity: 1; animation: pulse 1s infinite alternate; }
+  @keyframes pulse { from { opacity: 0.45; } to { opacity: 1; } }
+
+  #overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center;
+             background: rgba(80, 0, 0, 0.72); }
+  #overlay.on { display: flex; }
+  #overlay h1 { font-size: 40px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<canvas id="road"></canvas>
+<div id="vignette"></div>
+
+<div id="hud" class="panel">
+  <div class="row"><span><span id="connDot" class="dot"></span><span id="connText">Connecting…</span></span></div>
+  <div class="row"><span><span id="camDot" class="dot"></span><span id="camText">Camera off</span></span></div>
+  <div class="row"><span class="label">Mode</span><span id="mode">Manual</span></div>
+  <div class="row"><span class="label">Speed</span><span id="speed">0 km/h</span></div>
+  <div class="row"><span class="label">Lane offset</span><span id="offset">0.00 m</span></div>
+  <div class="row"><span class="label">Steering</span><span id="steer">0.00</span></div>
+</div>
+
+<div id="fatigue" class="panel">
+  <div class="label">Fatigue score</div>
+  <div class="row" style="align-items: baseline;"><span id="score">–</span><span id="state">–</span></div>
+  <div class="bar"><div id="barFill"></div></div>
+  <div id="sessionNote" class="label" style="margin-top: 8px; font-size: 12px;"></div>
+</div>
+
+<div id="features" class="panel"></div>
+
+<div id="help" class="panel">
+  <kbd>←</kbd><kbd>→</kbd> or <kbd>A</kbd><kbd>D</kbd> steer · <kbd>↑</kbd><kbd>↓</kbd> speed · gamepad works too<br>
+  Wind gusts push the car; counter-steer fast (that's your reaction time).<br>
+  <kbd>1</kbd> manual · <kbd>2</kbd> autopilot (alert) · <kbd>3</kbd> autopilot (drowsy)
+</div>
+
+<div id="overlay"><div>
+  <h1>Critical fatigue</h1>
+  <p>Pull over and take a break.<br>Press <kbd>Space</kbd> to resume.</p>
+</div></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+const params = new URLSearchParams(location.search);
+const WS_URL = params.get('server') ||
+  (location.protocol.startsWith('http') ? location.origin.replace(/^http/, 'ws') : 'ws://localhost:8000') + '/ws/telemetry';
+
+const LANE_WIDTH = 3.5;          // m
+const STEER_GAIN = 0.35;         // lateral m/s per unit steering per m/s of speed
+const MAX_OFFSET = 3.2;          // m; past this the car is on the shoulder and can't drift further
+const SEND_HZ = 10;              // telemetry rate (PRD: every 100 ms)
+const WINDOW_S = 30;             // feature aggregation window (matches the vision pipeline)
+const REVERSAL_DEADBAND = 0.08;  // ignore steering wiggles smaller than this
+// Keyboard + display latency we don't want to count as driver reaction time
+const REACTION_BASELINE_S = 0.25;
+
+// ---------------------------------------------------------------------------
+// Road: centre line x(s) built from a few sines so curves are smooth and endless
+// ---------------------------------------------------------------------------
+const CURVES = [
+  { amp: 6, len: 420, phase: 0.0 },
+  { amp: 2, len: 170, phase: 1.3 },
+];
+function roadX(s) {
+  return CURVES.reduce((x, c) => x + c.amp * Math.sin((2 * Math.PI * s) / c.len + c.phase), 0);
+}
+function roadSlope(s) {
+  return CURVES.reduce((d, c) => d + c.amp * (2 * Math.PI / c.len) * Math.cos((2 * Math.PI * s) / c.len + c.phase), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Vehicle + input state
+// ---------------------------------------------------------------------------
+const car = { s: 0, x: roadX(0), speed: 22, steer: 0 };   // speed in m/s
+const keys = {};
+let mode = 'manual';          // manual | alert | drowsy
+let paused = false;
+let gust = null;              // { force, until, start, steerAtStart, answered }
+let nextGustAt = 6;
+let simTime = 0;
+
+const samples = [];           // { t, offset, steer, required }
+const reactions = [];         // { t, delay }
+
+addEventListener('keydown', (e) => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === '1') setMode('manual');
+  if (e.key === '2') setMode('alert');
+  if (e.key === '3') setMode('drowsy');
+  if (e.key === ' ' && paused) { paused = false; overlay.classList.remove('on'); acknowledgedCritical = true; }
+  if (e.key.startsWith('Arrow') || e.key === ' ') e.preventDefault();
+  unlockAudio();
+});
+addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+
+function setMode(m) {
+  mode = m;
+  document.getElementById('mode').textContent = { manual: 'Manual', alert: 'Autopilot · alert', drowsy: 'Autopilot · drowsy' }[m];
+}
+
+function gamepad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  return [...pads].find(Boolean) || null;
+}
+
+// ---------------------------------------------------------------------------
+// Steering sources
+// ---------------------------------------------------------------------------
+function manualSteer(dt) {
+  const pad = gamepad();
+  if (pad && Math.abs(pad.axes[0]) > 0.08) return pad.axes[0];
+  const dir = (keys['arrowright'] || keys['d'] ? 1 : 0) - (keys['arrowleft'] || keys['a'] ? 1 : 0);
+  // Ramp while a key is held; on release the wheel self-aligns with the road's curve (like a real car's caster)
+  const target = dir === 0 ? car.steer + (requiredSteer() - car.steer) * Math.min(1, 3 * dt) : car.steer + dir * 1.5 * dt;
+  return Math.max(-1, Math.min(1, target));
+}
+
+// Autopilot sees the world with a delay; the drowsy one is slower, sloppier and has lapses
+const autoHistory = [];
+let lapseUntil = 0;
+function autoSteer(dt, drowsy) {
+  autoHistory.push({ t: simTime, offset: car.x - roadX(car.s), required: requiredSteer(), push: gust ? gust.force : 0 });
+  const delay = drowsy ? 0.9 : 0.15;
+  while (autoHistory.length > 2 && autoHistory[1].t <= simTime - delay) autoHistory.shift();
+  const seen = autoHistory[0];
+
+  if (drowsy) {
+    if (simTime < lapseUntil) return car.steer;                    // microsleep: hands frozen
+    if (Math.random() < dt / 7) lapseUntil = simTime + 1.5 + Math.random() * 1.5;
+  }
+  // Steer back to the lane centre over `tau` seconds and cancel any wind it has noticed;
+  // the drowsy driver over-corrects (short tau) on stale information, so it weaves
+  const lateral = car.speed * STEER_GAIN;
+  const tau = drowsy ? 0.6 : 1.2;
+  const noise = (Math.random() - 0.5) * (drowsy ? 0.2 : 0.02);
+  const target = seen.required - seen.offset / (lateral * tau) - seen.push / lateral + noise;
+  const rate = drowsy ? 1.0 : 2.5;                                 // how fast hands can move
+  return car.steer + Math.max(-rate * dt, Math.min(rate * dt, target - car.steer));
+}
+
+function requiredSteer() {
+  return roadSlope(car.s) / STEER_GAIN;
+}
+
+// ---------------------------------------------------------------------------
+// Simulation step
+// ---------------------------------------------------------------------------
+function step(dt) {
+  simTime += dt;
+
+  if (keys['arrowup'] || keys['w']) car.speed = Math.min(36, car.speed + 6 * dt);
+  if (keys['arrowdown'] || keys['s']) car.speed = Math.max(5, car.speed - 10 * dt);
+
+  car.steer = mode === 'manual' ? manualSteer(dt) : autoSteer(dt, mode === 'drowsy');
+
+  // Wind gusts: a sideways push the driver must react to
+  if (!gust && simTime >= nextGustAt) {
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    gust = { force: dir * (0.6 + Math.random() * 0.5), start: simTime, until: simTime + 1.6, steerAtStart: car.steer, answered: false };
+  }
+  let push = 0;
+  if (gust) {
+    push = gust.force;
+    // Reaction = time until steering moves against the push
+    if (!gust.answered && -Math.sign(gust.force) * (car.steer - gust.steerAtStart) > 0.05) {
+      recordReaction(simTime - gust.start);
+      gust.answered = true;
+    }
+    if (simTime >= gust.until) {
+      if (!gust.answered) recordReaction(Math.min(2.5, simTime - gust.start + 0.9));
+      gust = null;
+      nextGustAt = simTime + 5 + Math.random() * 6;
+    }
+  }
+
+  car.s += car.speed * dt;
+  car.x += (car.speed * STEER_GAIN * car.steer + push) * dt;
+  const road = roadX(car.s);
+  car.x = Math.max(road - MAX_OFFSET, Math.min(road + MAX_OFFSET, car.x));
+}
+
+function recordReaction(seconds) {
+  reactions.push({ t: simTime, delay: Math.max(0, seconds - REACTION_BASELINE_S) });
+}
+
+// ---------------------------------------------------------------------------
+// Telemetry features over a 30 s window, in the same units as data/training_data.csv
+// ---------------------------------------------------------------------------
+function sampleTelemetry() {
+  samples.push({ t: simTime, offset: car.x - roadX(car.s), steer: car.steer, required: requiredSteer() });
+  while (samples.length && samples[0].t < simTime - WINDOW_S) samples.shift();
+  while (reactions.length && reactions[0].t < simTime - WINDOW_S) reactions.shift();
+}
+
+const mean = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+const variance = (a) => { const m = mean(a); return mean(a.map((v) => (v - m) ** 2)); };
+
+function computeFeatures() {
+  if (samples.length < 10) return null;
+  const offsets = samples.map((s) => s.offset);
+  const errors = samples.map((s) => s.steer - s.required);
+  const span = Math.max(1, samples[samples.length - 1].t - samples[0].t);
+
+  // Both counts use steering *error* (input minus what the curve needs), so following
+  // the road doesn't count; only back-and-forth over-correction does.
+  // Reversals: direction changes of the error, ignoring tiny wiggles
+  let reversals = 0, lastDir = 0, anchor = errors[0];
+  for (const e of errors) {
+    const d = e - anchor;
+    if (Math.abs(d) < REVERSAL_DEADBAND) continue;
+    const dir = Math.sign(d);
+    if (lastDir && dir !== lastDir) reversals++;
+    lastDir = dir; anchor = e;
+  }
+  // Corrections: distinct moves of the error back toward the lane centre
+  let corrections = 0, correcting = false;
+  for (let i = 1; i < samples.length; i++) {
+    const de = errors[i] - errors[i - 1];
+    const now = Math.abs(de) > 0.02 && Math.abs(samples[i].offset) > 0.15 && Math.sign(de) === -Math.sign(samples[i].offset);
+    if (now && !correcting) corrections++;
+    correcting = now;
+  }
+
+  return {
+    lane_offset_mean: mean(offsets.map(Math.abs)),
+    lane_drift_var: variance(offsets),
+    steering_instability: Math.sqrt(variance(errors)),
+    correction_freq: corrections / (span / 10),
+    reaction_delay_mean: reactions.length ? mean(reactions.map((r) => r.delay)) : 0,
+    steering_reversals: reversals / (span / 10),   // per 10 s
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Backend connection
+// ---------------------------------------------------------------------------
+let ws = null;
+let acknowledgedCritical = false;
+function connect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => setConn(true);
+  ws.onclose = () => { setConn(false); setTimeout(connect, 2000); };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'fatigue_update') showFatigue(msg);
+  };
+}
+function setConn(on) {
+  connDot.classList.toggle('on', on);
+  connText.textContent = on ? 'Backend connected' : 'Backend offline, retrying';
+}
+
+function send() {
+  if (!ws || ws.readyState !== WebSocket.OPEN || paused) return;
+  const f = computeFeatures();
+  if (!f) return;
+  ws.send(JSON.stringify({
+    lane_offset: samples[samples.length - 1].offset,
+    steering_angle: car.steer,
+    speed_kmh: car.speed * 3.6,
+    ...f,
+  }));
+  renderFeatures(f);
+}
+
+// ---------------------------------------------------------------------------
+// Alerts: colour, vignette, beep, gamepad rumble, pause on critical
+// ---------------------------------------------------------------------------
+const STATE_COLORS = { normal: 'var(--normal)', mild: 'var(--mild)', high: 'var(--high)', severe: 'var(--high)', critical: 'var(--critical)' };
+let audio = null, lastBeep = 0;
+function unlockAudio() { if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)(); }
+function beep(freq) {
+  if (!audio || performance.now() - lastBeep < 1500) return;
+  lastBeep = performance.now();
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.frequency.value = freq; g.gain.value = 0.08;
+  o.connect(g).connect(audio.destination); o.start(); o.stop(audio.currentTime + 0.25);
+}
+function rumble(strength) {
+  const pad = gamepad();
+  pad?.vibrationActuator?.playEffect?.('dual-rumble', { duration: 400, strongMagnitude: strength, weakMagnitude: strength });
+}
+
+function showFatigue(msg) {
+  const waiting = msg.fatigue_score === null || msg.fatigue_score === undefined;
+  const state = waiting ? 'waiting' : String(msg.fatigue_state || 'normal').toLowerCase();
+  const color = STATE_COLORS[state] || 'var(--muted)';
+  score.textContent = waiting ? '–' : msg.fatigue_score.toFixed(2);
+  stateEl.textContent = state.toUpperCase();
+  stateEl.style.color = color;
+  barFill.style.width = waiting ? '0' : `${Math.min(100, msg.fatigue_score * 100)}%`;
+  barFill.style.background = color;
+  showCamera(msg.vision_status, msg.session_active);
+
+  const warning = state === 'high' || state === 'severe' || state === 'critical';
+  vignette.classList.toggle('on', warning);
+  vignette.style.setProperty('--high', color);
+  if (state === 'mild') rumble(0.3);
+  if (warning) { beep(state === 'critical' ? 880 : 620); rumble(state === 'critical' ? 1 : 0.6); }
+
+  if (state === 'critical' && !paused && !acknowledgedCritical) { paused = true; overlay.classList.add('on'); }
+  if (state !== 'critical') acknowledgedCritical = false;
+}
+const stateEl = document.getElementById('state');
+
+const CAMERA_TEXT = {
+  off: ['Camera off', 'Scoring from your driving only.'],
+  starting: ['Camera starting…', 'Starting the webcam pipeline…'],
+  no_camera: ['No camera', "Can't read the webcam. Is another app using it?"],
+  no_face: ['No face found', 'Scoring from your driving until the webcam sees your face.'],
+  tracking: ['Tracking face', 'Score combines your face and your driving.'],
+};
+function showCamera(status, sessionActive) {
+  const key = sessionActive === false ? 'off' : (status in CAMERA_TEXT ? status : 'off');
+  const [label, note] = CAMERA_TEXT[key];
+  camText.textContent = label;
+  camDot.classList.toggle('on', key === 'tracking');
+  camDot.style.background = key === 'no_face' || key === 'starting' ? 'var(--mild)' : '';
+  sessionNote.textContent = note;
+}
+
+function renderFeatures(f) {
+  features.innerHTML = Object.entries(f).map(([k, v]) => `${k.padEnd(21)} ${v.toFixed(3)}`).join('<br>');
+}
+
+// ---------------------------------------------------------------------------
+// Rendering (top-down, car fixed near the bottom of the screen)
+// ---------------------------------------------------------------------------
+const canvas = document.getElementById('road');
+const ctx = canvas.getContext('2d');
+function resize() {
+  canvas.width = innerWidth * devicePixelRatio;
+  canvas.height = innerHeight * devicePixelRatio;
+}
+addEventListener('resize', resize);
+resize();
+
+function draw() {
+  const W = canvas.width, H = canvas.height;
+  const ppm = Math.min(W, H) / 22;          // pixels per metre
+  const carY = H * 0.78;
+  const toScreen = (s, x) => [W / 2 + (x - car.x) * ppm, carY - (s - car.s) * ppm];
+
+  ctx.fillStyle = '#2f5d2f';
+  ctx.fillRect(0, 0, W, H);
+
+  // Road surface + markings, sampled along s
+  const sFrom = car.s - (H - carY) / ppm - 2, sTo = car.s + carY / ppm + 2;
+  const edge = (side) => { const pts = []; for (let s = sFrom; s <= sTo; s += 0.5) pts.push(toScreen(s, roadX(s) + side)); return pts; };
+  const left = edge(-LANE_WIDTH / 2 - 0.4), right = edge(LANE_WIDTH / 2 + 0.4);
+  ctx.fillStyle = '#3a3d42';
+  ctx.beginPath();
+  left.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  right.reverse().forEach(([x, y]) => ctx.lineTo(x, y));
+  ctx.fill();
+
+  ctx.lineWidth = 0.12 * ppm;
+  ctx.strokeStyle = '#e8e8e8';
+  for (const side of [-LANE_WIDTH / 2, LANE_WIDTH / 2]) {
+    ctx.beginPath();
+    edge(side).forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.stroke();
+  }
+  // Dashed centre guide
+  ctx.strokeStyle = 'rgba(255, 210, 60, 0.5)';
+  ctx.setLineDash([1.5 * ppm, 2.5 * ppm]);
+  ctx.lineDashOffset = car.s * ppm;
+  ctx.beginPath();
+  edge(0).forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Car (shakes during a gust)
+  const shake = gust ? (Math.random() - 0.5) * 0.08 * ppm : 0;
+  ctx.save();
+  ctx.translate(W / 2 + shake, carY);
+  ctx.rotate(Math.atan((car.speed * STEER_GAIN * car.steer) / car.speed));
+  ctx.fillStyle = '#d33';
+  ctx.fillRect(-0.9 * ppm, -2.2 * ppm, 1.8 * ppm, 4.4 * ppm);
+  ctx.fillStyle = '#9cd2ff';
+  ctx.fillRect(-0.75 * ppm, -1.4 * ppm, 1.5 * ppm, 0.9 * ppm);
+  ctx.restore();
+
+  // Gust indicator arrow
+  if (gust) {
+    const dir = Math.sign(gust.force);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.font = `${0.9 * ppm}px system-ui`;
+    ctx.textAlign = 'center';
+    ctx.fillText(dir > 0 ? 'WIND ➜' : '⬅ WIND', W / 2, carY - 3.5 * ppm);
+  }
+
+  const offsetNow = car.x - roadX(car.s);
+  speed.textContent = `${Math.round(car.speed * 3.6)} km/h`;
+  offset.textContent = `${offsetNow >= 0 ? '+' : ''}${offsetNow.toFixed(2)} m`;
+  offset.style.color = Math.abs(offsetNow) > LANE_WIDTH / 2 ? 'var(--critical)' : '';
+  steer.textContent = car.steer.toFixed(2);
+}
+
+// ---------------------------------------------------------------------------
+// Main loop: physics every frame, telemetry at 10 Hz
+// ---------------------------------------------------------------------------
+let last = performance.now(), sendAcc = 0;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (!paused) {
+    step(dt);
+    sendAcc += dt;
+    while (sendAcc >= 1 / SEND_HZ) { sendAcc -= 1 / SEND_HZ; sampleTelemetry(); send(); }
+  }
+  draw();
+  requestAnimationFrame(frame);
+}
+
+setMode('manual');
+connect();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

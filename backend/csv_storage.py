@@ -1,8 +1,8 @@
 import csv
 import os
-from datetime import datetime
 
-CSV_FILE = "sessions.csv"
+# Always store sessions at the project root, regardless of the working directory
+CSV_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.csv")
 HEADERS = [
     "driver_name", "driver_phone", "emergency_contact_name",
     "emergency_contact_phone", "start_time", "end_time",

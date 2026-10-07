@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Start Monitoring</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500&display=swap" rel="stylesheet" />
+  <link href="style.css" rel="stylesheet" />
+</head>
+<body>
+  <form class="card wide" novalidate>
+    <span class="step">Step 3 of 3</span>
+    <h1>Start monitoring</h1>
+    <p class="hint">Run one module or both. Both together give the most reliable score.</p>
+    <div class="modules">
+      <label class="module">
+        <input type="checkbox" id="camera" checked />
+        <span class="tick"></span>
+        <strong>Camera</strong>
+        <span>Watches your eyes, yawns and head nods through the webcam.</span>
+      </label>
+      <label class="module">
+        <input type="checkbox" id="simulator" checked />
+        <span class="tick"></span>
+        <strong>Driving simulator</strong>
+        <span>Opens in a new tab and measures lane keeping, steering and reactions.</span>
+      </label>
+    </div>
+    <p class="error" id="error"></p>
+    <div class="actions">
+      <a class="button secondary" href="contact.html">Back</a>
+      <button type="submit" id="startBtn">Start</button>
+    </div>
+  </form>
+  <script src="api.js"></script>
+  <script>
+    const driver = loadDraft('driver');
+    const contact = loadDraft('contact');
+    if (!driver) location.replace('login.html');
+    else if (!contact) location.replace('contact.html');
+
+    const camera = document.getElementById('camera');
+    const simulator = document.getElementById('simulator');
+    const startBtn = document.getElementById('startBtn');
+    const error = document.getElementById('error');
+    const sync = () => { startBtn.disabled = !camera.checked && !simulator.checked; };
+    [camera, simulator].forEach((box) => box.addEventListener('change', sync));
+    sync();
+
+    document.querySelector('form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const modules = { camera: camera.checked, simulator: simulator.checked };
+      // Open the tab now, while the click still counts as a user gesture; point it at the simulator once the session exists
+      const simTab = modules.simulator ? window.open('', '_blank') : null;
+      startBtn.disabled = true;
+      startBtn.textContent = 'Starting…';
+      error.textContent = '';
+      try {
+        const result = await apiPost('/session/start', {
+          driver_name: fullName(driver),
+          driver_phone: driver.phone,
+          emergency_contact_name: fullName(contact),
+          emergency_contact_phone: contact.phone,
+          ...modules,
+        });
+        if (result.status !== 'success' && !/already/i.test(result.message || '')) throw new Error(result.message);
+        saveDraft('modules', modules);
+        if (simTab) simTab.location = API_BASE + '/sim/';
+        location.href = 'monitor.html';
+      } catch (e) {
+        simTab?.close();
+        error.textContent = "Couldn't start the session. Is the backend running?";
+        startBtn.textContent = 'Start';
+        sync();
+      }
+    });
+  </script>
+</body>
+</html>

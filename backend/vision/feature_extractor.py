@@ -1,10 +1,10 @@
+import os
 import numpy as np
-try:
-    from .features import EYE_CLOSED_THRESHOLD
-except (ImportError, ValueError):
-    from vision.features import EYE_CLOSED_THRESHOLD
+from .features import EYE_CLOSED_THRESHOLD
 
 EAR_THRESHOLD = EYE_CLOSED_THRESHOLD
+# Physiological range warnings fire every second, so only print them when debugging
+DEBUG_RANGES = os.environ.get("FATIGUE_DEBUG") == "1"
 
 class VisionFeatureExtractor:
     """
@@ -73,14 +73,15 @@ class VisionFeatureExtractor:
         # 6. PERCLOS initialization adn defination
         perclos = float(np.mean(ear_vals < self.ear_threshold))
 
-        self._validate_ranges({
-            "EAR_mean": ear_mean,
-            "blink_frequency": blink_frequency,
-            "ECD_max": ecd_max,
-            "MAR_max": mar_max,
-            "pitch_mean": pitch_mean,
-            "pitch_std": pitch_std
-        })
+        if DEBUG_RANGES:
+            self._validate_ranges({
+                "EAR_mean": ear_mean,
+                "blink_frequency": blink_frequency,
+                "ECD_max": ecd_max,
+                "MAR_max": mar_max,
+                "pitch_mean": pitch_mean,
+                "pitch_std": pitch_std
+            })
 
         return {
             "EAR_mean": ear_mean,
@@ -116,21 +117,3 @@ class VisionFeatureExtractor:
         # Pitch_std → < 20
         if metrics["pitch_std"] > 20.0:
             print(f"[WARNING] High Pitch Noise: {metrics['pitch_std']:.1f} (Expected < 20)")
-
-def build_feature_vector(features):
-    """
-    Task 9: Constructs the final Python list feature vector with guaranteed float types.
-    F = [EAR_mean, EAR_std, EAR_trend, blink_frequency, MAR_max, pitch_mean, pitch_std]
-    """
-    if features is None:
-        return [0.0] * 7
-
-    return [
-        float(features["EAR_mean"]),
-        float(features["EAR_std"]),
-        float(features["EAR_trend"]),
-        float(features["blink_frequency"]),
-        float(features["MAR_max"]),
-        float(features["pitch_mean"]),
-        float(features["pitch_std"])
-    ]

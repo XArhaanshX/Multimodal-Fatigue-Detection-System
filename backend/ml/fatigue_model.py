@@ -10,15 +10,11 @@ class FatigueModel:
     Real-time inference class for the Multimodal Driver Fatigue Detection System.
     Loads a calibrated LightGBM model and predicts P(fatigue).
     """
-    def __init__(self, model_path=None):
-        if model_path is None:
-            # Resolve default path relative to this file
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            model_path = os.path.join(base_dir, "model", "fatigue_model.pkl")
-            
+    def __init__(self, filename="fatigue_model.pkl"):
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model", filename)
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found at {model_path}. Run train_model.py first.")
-            
+
         print(f"[INFO] Loading Fatigue Model: {model_path}")
         self.model = joblib.load(model_path)
 
@@ -26,7 +22,7 @@ class FatigueModel:
         """
         Predicts the probability of fatigue.
         Args:
-            feature_vector (list): 19-dimensional feature vector.
+            feature_vector (list): feature vector in the order the model was trained on.
         Returns:
             float: P(fatigue) in range [0, 1].
         """
